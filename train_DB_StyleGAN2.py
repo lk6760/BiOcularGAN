@@ -182,6 +182,7 @@ def setup_training_loop_kwargs(
     args.G_kwargs.synthesis_kwargs.conv_clamp = args.D_kwargs.conv_clamp = 256 # clamp activations to avoid float16 overflow
     args.D_kwargs.epilogue_kwargs.mbstd_group_size = spec.mbstd
 
+
     args.G_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.D_opt_kwargs = dnnlib.EasyDict(class_name='torch.optim.Adam', lr=spec.lrate, betas=[0,0.99], eps=1e-8)
     args.loss_kwargs = dnnlib.EasyDict(class_name='training_scripts_DB_SG2.loss.StyleGAN2Loss', r1_gamma=spec.gamma)
@@ -306,6 +307,8 @@ def setup_training_loop_kwargs(
     elif resume in resume_specs:
         desc += f'-resume{resume}'
         args.resume_pkl = resume_specs[resume] # predefined url
+        if 'ffhq256' in resume:
+            args.G_kwargs.synthesis_kwargs.channels_dict = args.D_kwargs.channels_dict = {4: 512, 8: 512, 16: 512, 32: 512, 64: 256, 128: 128, 256: 64, 512: 64, 1024: 32} #256
     else:
         desc += '-resumecustom'
         args.resume_pkl = resume # custom path or url

@@ -70,6 +70,12 @@ from interpreter_utils.utils import latent_to_image, Interpolate
 
 import time
 
+#----------------------------------------------------------------------------
+
+class UserError(Exception):
+    pass
+
+#----------------------------------------------------------------------------
 
 class trainData(Dataset):
 
@@ -209,8 +215,20 @@ def prepare_stylegan(args):
             print("Eyes category")
             resolution = 512
             max_layer = 7
+        if "256" in args['category']:
+            print("Arbitrary category")
+            resolution = 256
+            max_layer = 7
+        if "512" in args['category']:
+            print("Arbitrary category")
+            resolution = 512
+            max_layer = 7
+        if "1024" in args['category']:
+            print("Arbitrary category")
+            resolution = 1024
+            max_layer = 7
         else:
-            assert "Not implementated!"
+            raise UserError('--category not defined correctly!')
 
         print("---- Resolution:", resolution, " Layers:", max_layer)
 
@@ -334,7 +352,7 @@ def generate_data(args, checkpoint_path, num_sample, start_step=0, vis=True, ign
     softmax_f = nn.Softmax(dim=1)
     with torch.no_grad():
         latent_cache = []
-        image_cache, image_NIR_cache = [], []
+        image_cache, image_GLS_cache = [], []
         seg_cache = []
         entropy_calculate = []
         results = []
@@ -360,19 +378,19 @@ def generate_data(args, checkpoint_path, num_sample, start_step=0, vis=True, ign
             latent = torch.from_numpy(latent).type(torch.FloatTensor).to(device)
             latent_cache.append(latent)
 
-            img, img_NIR, affine_layers = latent_to_image(g_all, upsamplers, latent, dim=args['dim'][1],
+            img, img_GLS, affine_layers = latent_to_image(g_all, upsamplers, latent, dim=args['dim'][1],
                                                      return_upsampled_layers=True, 
                                                      ignore_latent_layers=ignore_latent_layers, dev=device)
 
             if args['dim'][0] != args['dim'][1]:
                 img = img[:, 64:448][0]
-                img_NIR = img_NIR[:, 64:448][0]
+                img_GLS = img_GLS[:, 64:448][0]
             else:
                 img = img[0]
-                img_NIR = img_NIR[0]
+                img_GLS = img_GLS[0]
 
             image_cache.append(img)
-            image_NIR_cache.append(img_NIR)
+            image_GLS_cache.append(img_GLS)
 
             if args['dim'][0] != args['dim'][1]:
                 affine_layers = affine_layers[:, :, 64:448]
@@ -453,13 +471,13 @@ def generate_data(args, checkpoint_path, num_sample, start_step=0, vis=True, ign
                 curr_result['uncertrainty_score'] = top_k.item()
                 image_label_name = os.path.join(result_path, 'image_' + str(count_step) + '_label.png')
                 image_name = os.path.join(result_path, str(count_step) + '_RGB.png')
-                image_NIR_name = os.path.join(result_path,  str(count_step) + '_NIR.png')
+                image_GLS_name = os.path.join(result_path,  str(count_step) + '_GLS.png')
 
                 js_name = os.path.join(result_path, str(count_step) + '.npy')
                 img = Image.fromarray(img)
 
-                img_NIR = img_NIR[:, :, 0]
-                img_NIR = Image.fromarray(img_NIR, mode="L")
+                img_GLS = img_GLS[:, :, 0]
+                img_GLS = Image.fromarray(img_GLS, mode="L")
                 
                 img_seg = Image.fromarray(img_seg_final.astype('uint8'))
                 
@@ -467,7 +485,7 @@ def generate_data(args, checkpoint_path, num_sample, start_step=0, vis=True, ign
                 
                 
                 img.save(image_name)
-                img_NIR.save(image_NIR_name)
+                img_GLS.save(image_GLS_name)
                 img_seg.save(image_label_name)
                 
                 # SAVE THE NPY file? too large
@@ -497,9 +515,10 @@ def generate_data(args, checkpoint_path, num_sample, start_step=0, vis=True, ign
 def prepare_data(args, palette, ignore_latent_layers=None):
     print("-- Prepare stylegan")
     g_all, avg_latent, upsamplers = prepare_stylegan(args)
+    print("avg latent:", avg_latent.shape)
     print("-- Get latent info")
     latent_all = np.load(args['exp_dir'] + "/" + args['annotation_image_latent_path'])
-    latent_all = torch.from_numpy(latent_all).to(device)#.cuda()
+    latent_all = torch.from_numpy(latent_all).to(device)
     
     print("latent all:", latent_all.shape)
 
@@ -508,7 +527,7 @@ def prepare_data(args, palette, ignore_latent_layers=None):
     print("-- load mask")
     # load annotated mask
     mask_list = []
-    im_list, im_NIR_list = [], []
+    im_list, im_GLS_list = [], []
     latent_all = latent_all[:args['max_training']]
     num_data = len(latent_all)
 
@@ -531,16 +550,16 @@ def prepare_data(args, palette, ignore_latent_layers=None):
         mask_list.append(mask)
 
         im_name = os.path.join( args['exp_dir'], args['annotation_mask_path'], 'image_%d.jpg' % i)
-        im_NIR_name = os.path.join( args['exp_dir'], args['annotation_mask_path'], 'image_%d_NIR.jpg' % i)
+        im_GLS_name = os.path.join( args['exp_dir'], args['annotation_mask_path'], 'image_%d_GLS.jpg' % i)
         
         img = Image.open(im_name)
         img = img.resize((args['dim'][1], args['dim'][0]))
 
-        img_NIR = Image.open(im_NIR_name).convert("RGB")
-        img_NIR = img_NIR.resize((args['dim'][1], args['dim'][0]))
+        img_GLS = Image.open(im_GLS_name).convert("RGB")
+        img_GLS = img_GLS.resize((args['dim'][1], args['dim'][0]))
 
         im_list.append(np.array(img))
-        im_NIR_list.append(np.array(img_NIR))
+        im_GLS_list.append(np.array(img_GLS))
 
 
     print("-- clean up masks")
@@ -565,7 +584,7 @@ def prepare_data(args, palette, ignore_latent_layers=None):
     print("all_feature_maps TRAIN: ", all_feature_maps_train.shape)
 
     print("Show training examples")
-    vis, vis_NIR = [], []
+    vis, vis_GLS = [], []
     for i in range(len(latent_all) ):
 
         gc.collect()
@@ -576,7 +595,7 @@ def prepare_data(args, palette, ignore_latent_layers=None):
 
         # TODO fmain difference here is that this uses retun_upsampled = True and use_style_latents ... 
         # while make training_data script uses different
-        img, img_NIR, feature_maps = latent_to_image(g_all, upsamplers, latent_input.unsqueeze(0), dim=args['dim'][1],
+        img, img_GLS, feature_maps = latent_to_image(g_all, upsamplers, latent_input.unsqueeze(0), dim=args['dim'][1],
                                             return_upsampled_layers=True, use_style_latents=args['annotation_data_from_w'],
                                             ignore_latent_layers = ignore_latent_layers, dev=device) # TODO ignore layers how many
 
@@ -613,15 +632,15 @@ def prepare_data(args, palette, ignore_latent_layers=None):
         img_show = img_show.resize( (args['dim'][1], args['dim'][1]), Image.NEAREST)
 
         
-        img_NIR_show = Image.fromarray(np.squeeze(img_NIR[0])).convert("RGB")
-        img_NIR_show = img_NIR_show.resize( (args['dim'][1], args['dim'][1]), Image.NEAREST)
+        img_GLS_show = Image.fromarray(np.squeeze(img_GLS[0])).convert("RGB")
+        img_GLS_show = img_GLS_show.resize( (args['dim'][1], args['dim'][1]), Image.NEAREST)
 
         print(img_show)
-        print(img_NIR_show)
+        print(img_GLS_show)
         
         
         #print("--- After resize:", np.array(img_show).shape)
-        curr_vis = np.concatenate( [im_list[i], img_show, im_NIR_list[i], img_NIR_show, colorize_mask(new_mask, palette)], 0 )
+        curr_vis = np.concatenate( [im_list[i], img_show, im_GLS_list[i], img_GLS_show, colorize_mask(new_mask, palette)], 0 )
         
         vis.append( curr_vis )
 
@@ -647,8 +666,10 @@ def main(args, ignore_latent_layers=None):
         from torch_utils.data_util import cat_palette as palette
     elif "eyes" in args['category']:
         from torch_utils.data_util import cat_palette as palette
-
-    
+    elif "face" in args['category']:
+        from torch_utils.data_util import face_palette as palette
+    else:
+        raise UserError('--category requires category specified in train_datagan.json')
 
     print("Prepare data")
     all_feature_maps_train_all, all_mask_train_all, num_data = prepare_data(args, palette, ignore_latent_layers=ignore_latent_layers)
@@ -798,6 +819,5 @@ if __name__ == '__main__':
         print("Generate data")
         generate_data(opts, args.resume, args.num_sample, vis=args.save_vis, start_step=args.start_step, ignore_latent_layers=ignore_latent_layers)
     else:
-
         main(opts, ignore_latent_layers=ignore_latent_layers)
 

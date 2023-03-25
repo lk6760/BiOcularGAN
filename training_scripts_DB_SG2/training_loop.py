@@ -24,7 +24,7 @@ from torch_utils.ops import conv2d_gradfix
 from torch_utils.ops import grid_sample_gradfix
 
 from training_scripts_DB_SG2.dataset import ImageFolderDataset
-from training_scripts_DB_SG2.networks import Discriminator
+from training_scripts_DB_SG2.networks import Discriminator, Generator
 
 from training_scripts_DB_SG2 import legacy
 from metrics import metric_main
@@ -65,8 +65,8 @@ def setup_snapshot_image_grid(training_set, random_seed=0):
             label_groups[label] = [indices[(i + gw) % len(indices)] for i in range(len(indices))]
 
     # Load data.
-    images, NIRs, labels = zip(*[training_set[i] for i in grid_indices])
-    return (gw, gh), np.stack(images), np.stack(NIRs), np.stack(labels)
+    images, GLSs, labels = zip(*[training_set[i] for i in grid_indices])
+    return (gw, gh), np.stack(images), np.stack(GLSs), np.stack(labels)
 
 #----------------------------------------------------------------------------
 
@@ -123,7 +123,7 @@ def training_loop(
     allow_tf32              = False,    # Enable torch.backends.cuda.matmul.allow_tf32 and torch.backends.cudnn.allow_tf32?
     abort_fn                = None,     # Callback function for determining whether to abort training_scripts_DB_SG2. Must return consistent results across ranks.
     progress_fn             = None,     # Callback function for updating training progress. Called for all ranks.
-    TRAIN_IMG_OR_NIR_OR_MASK = "NIR",
+    TRAIN_IMG_OR_GLS_OR_MASK = "GLS",
 ):
     # Initialize.
     start_time = time.time()
@@ -144,8 +144,8 @@ def training_loop(
     tmp_training_set_kwargs = training_set_kwargs.copy()
     tmp_training_set_kwargs.pop("class_name", None)
 
-    training_set = ImageFolderDataset(**tmp_training_set_kwargs)
-    #training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training_scripts_DB_SG2.dataset.Dataset
+    #training_set = ImageFolderDataset(**tmp_training_set_kwargs)
+    training_set = dnnlib.util.construct_class_by_name(**training_set_kwargs) # subclass of training_scripts_DB_SG2.dataset.Dataset
     training_set_sampler = misc.InfiniteSampler(dataset=training_set, rank=rank, num_replicas=num_gpus, seed=random_seed)
     training_set_iterator = iter(torch.utils.data.DataLoader(dataset=training_set, sampler=training_set_sampler, batch_size=batch_size//num_gpus, **data_loader_kwargs))
     if rank == 0:
@@ -159,14 +159,19 @@ def training_loop(
     if rank == 0:
         print('Constructing networks...')
     common_kwargs = dict(c_dim=training_set.label_dim, img_resolution=training_set.resolution, img_channels=training_set.num_channels)
+    # tmp_G_kwargs = G_kwargs.copy()
+    # tmp_G_kwargs.pop("class_name", None)
+    # G = Generator(**tmp_G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     D = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     G_ema = copy.deepcopy(G).eval()
 
     # TODO but make it grayscale
     
-    print(D_kwargs)
-    print(common_kwargs)
+    # print("D_kwargs")
+    # print(D_kwargs)
+    # print("common_kwargs")
+    # print(common_kwargs)
 
     # TODO do not do this manually
     disc_kwargs = { 'block_kwargs': {}, 
@@ -177,13 +182,13 @@ def training_loop(
                     'num_fp16_res': 4,
                     'conv_clamp': 256}
 
-    tmp_kwargs = {'c_dim': 0, 'img_resolution': training_set.resolution, 'img_channels': 1}
+    tmp_kwargs = {'c_dim': 0, 'img_resolution': training_set.resolution, 'img_channels': 3}
 
     #D_mask = Discriminator(**disc_kwargs, **tmp_kwargs )
     #D_mask = D_mask.train().requires_grad_(False).to(device)
 
-    D_NIR = Discriminator(**disc_kwargs, **tmp_kwargs )
-    D_NIR = D_NIR.train().requires_grad_(False).to(device)
+    D_GLS = Discriminator(**disc_kwargs, **tmp_kwargs)
+    D_GLS = D_GLS.train().requires_grad_(False).to(device)
 
     #D_mask = dnnlib.util.construct_class_by_name(**D_kwargs, **common_kwargs).train().requires_grad_(False).to(device) # subclass of torch.nn.Module
     
@@ -196,13 +201,14 @@ def training_loop(
             resume_data = legacy.load_network_pkl(f)
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
             print(name)
+            #print(resume_data[name])
             misc.copy_params_and_buffers(resume_data[name], module, require_all=False)
     
     #print(G)
     #print("....")
     #print(G.synthesis.b4)
     # lock parts of the network 
-    if TRAIN_IMG_OR_NIR_OR_MASK == "mask" and False: 
+    if TRAIN_IMG_OR_GLS_OR_MASK == "mask" and False: 
 
         print("Freeze layers")
         for name, module in [('G', G), ('D', D), ('G_ema', G_ema)]:
@@ -238,10 +244,11 @@ def training_loop(
     if rank == 0:
         z = torch.empty([batch_gpu, G.z_dim], device=device)
         c = torch.empty([batch_gpu, G.c_dim], device=device)
-        img, NIR_img = misc.print_module_summary(G, [z, c])
+        img, GLS_img = misc.print_module_summary(G, [z, c])
         print("Generator output shape:", img.shape)
+        print(GLS_img.shape)
         misc.print_module_summary(D, [img, c])
-        misc.print_module_summary(D_NIR, [NIR_img, c])
+        misc.print_module_summary(D_GLS, [GLS_img, c])
         
         #exit()
         
@@ -261,7 +268,7 @@ def training_loop(
     if rank == 0:
         print(f'Distributing across {num_gpus} GPUs...')
     ddp_modules = dict()
-    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema),  ('D_NIR', D_NIR), ('augment_pipe', augment_pipe)]:
+    for name, module in [('G_mapping', G.mapping), ('G_synthesis', G.synthesis), ('D', D), (None, G_ema),  ('D_GLS', D_GLS), ('augment_pipe', augment_pipe)]:
         if (num_gpus > 1) and (module is not None) and len(list(module.parameters())) != 0:
             print("DOO", name)
             module.requires_grad_(True)
@@ -274,11 +281,11 @@ def training_loop(
     if rank == 0:
         print('Setting up training phases...')
     
-    loss_kwargs['TRAIN_IMAGE_OR_NIR_OR_MASK'] = "NIR"#TRAIN_IMG_OR_MASK
+    loss_kwargs['TRAIN_IMAGE_OR_GLS_OR_MASK'] = "GLS"#TRAIN_IMG_OR_MASK
 
     loss = dnnlib.util.construct_class_by_name(device=device, **ddp_modules, **loss_kwargs) # subclass of training_scripts_DB_SG2.loss.Loss
     phases = []
-    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval), ('D_NIR', D_NIR, D_opt_kwargs, D_reg_interval)]:
+    for name, module, opt_kwargs, reg_interval in [('G', G, G_opt_kwargs, G_reg_interval), ('D', D, D_opt_kwargs, D_reg_interval), ('D_GLS', D_GLS, D_opt_kwargs, D_reg_interval)]:
         if reg_interval is None:
             opt = dnnlib.util.construct_class_by_name(params=module.parameters(), **opt_kwargs) # subclass of torch.optim.Optimizer
             phases += [dnnlib.EasyDict(name=name+'both', module=module, opt=opt, interval=1)]
@@ -303,10 +310,10 @@ def training_loop(
     grid_c = None
     if rank == 0:
         print('Exporting sample images...')
-        grid_size, images, NIR_imgs, labels = setup_snapshot_image_grid(training_set=training_set)
+        grid_size, images, GLS_imgs, labels = setup_snapshot_image_grid(training_set=training_set)
         save_image_grid(images, os.path.join(run_dir, 'reals.png'), drange=[0,255], grid_size=grid_size)
         #save_image_grid(masks, os.path.join(run_dir, 'reals_masks.png'), drange=[0,255], grid_size=grid_size)
-        save_image_grid(NIR_imgs, os.path.join(run_dir, 'reals_NIR.png'), drange=[0,255], grid_size=grid_size)
+        save_image_grid(GLS_imgs, os.path.join(run_dir, 'reals_GLS.png'), drange=[0,255], grid_size=grid_size)
         
         grid_z = torch.randn([labels.shape[0], G.z_dim], device=device).split(batch_gpu)
         grid_c = torch.from_numpy(labels).to(device).split(batch_gpu)
@@ -314,12 +321,12 @@ def training_loop(
         # run generator
         images = torch.cat([G_ema(z=z, c=c, noise_mode='const')[0].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
         #masks = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
-        NIR_imgs = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+        GLS_imgs = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
 
         print(images.shape)
         save_image_grid(images, os.path.join(run_dir, 'fakes_init.png'), drange=[-1,1], grid_size=grid_size)
         #save_image_grid(masks, os.path.join(run_dir, 'fakes_init_masks.png'), drange=[-1,1], grid_size=grid_size)
-        save_image_grid(NIR_imgs, os.path.join(run_dir, 'fakes_init_NIR.png'), drange=[-1,1], grid_size=grid_size)
+        save_image_grid(GLS_imgs, os.path.join(run_dir, 'fakes_init_GLS.png'), drange=[-1,1], grid_size=grid_size)
         
     # Initialize logs.
     if rank == 0:
@@ -352,9 +359,9 @@ def training_loop(
         
         # Fetch training data.
         with torch.autograd.profiler.record_function('data_fetch'):
-            phase_real_img, phase_real_NIR, phase_real_c = next(training_set_iterator)
+            phase_real_img, phase_real_GLS, phase_real_c = next(training_set_iterator)
             phase_real_img = (phase_real_img.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
-            phase_real_NIR = (phase_real_NIR.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
+            phase_real_GLS = (phase_real_GLS.to(device).to(torch.float32) / 127.5 - 1).split(batch_gpu)
             
             # TODO fix this preprocessing here? 
             #phase_real_mask = (phase_real_mask.to(device).to(torch.float32)).split(batch_gpu)
@@ -378,10 +385,10 @@ def training_loop(
             phase.module.requires_grad_(True)
 
             # Accumulate gradients over multiple rounds.
-            for round_idx, (real_img, real_NIR, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_NIR, phase_real_c, phase_gen_z, phase_gen_c)):
+            for round_idx, (real_img, real_GLS, real_c, gen_z, gen_c) in enumerate(zip(phase_real_img, phase_real_GLS, phase_real_c, phase_gen_z, phase_gen_c)):
                 sync = (round_idx == batch_size // (batch_gpu * num_gpus) - 1)
                 gain = phase.interval
-                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_NIR=real_NIR, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
+                loss.accumulate_gradients(phase=phase.name, real_img=real_img, real_GLS=real_GLS, real_c=real_c, gen_z=gen_z, gen_c=gen_c, sync=sync, gain=gain)
 
             # TODO ended here 
             # Update weights.
@@ -448,19 +455,19 @@ def training_loop(
         # Save image snapshot.
         if (rank == 0) and (image_snapshot_ticks is not None) and (done or cur_tick % image_snapshot_ticks == 0):
             images = torch.cat([G_ema(z=z, c=c, noise_mode='const')[0].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
-            imgs_NIR = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
+            imgs_GLS = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
             
             #masks = torch.cat([G_ema(z=z, c=c, noise_mode='const')[1].cpu() for z, c in zip(grid_z, grid_c)]).numpy()
 
             save_image_grid(images, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}.png'), drange=[-1,1], grid_size=grid_size)
-            save_image_grid(imgs_NIR, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}_NIRs.png'), drange=[-1,1], grid_size=grid_size)
+            save_image_grid(imgs_GLS, os.path.join(run_dir, f'fakes{cur_nimg//1000:06d}_GLSs.png'), drange=[-1,1], grid_size=grid_size)
 
         # Save network snapshot.
         snapshot_pkl = None
         snapshot_data = None
         if (network_snapshot_ticks is not None) and (done or cur_tick % network_snapshot_ticks == 0):
             snapshot_data = dict(training_set_kwargs=dict(training_set_kwargs))
-            for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe), ('D_NIR', D_NIR)]:
+            for name, module in [('G', G), ('D', D), ('G_ema', G_ema), ('augment_pipe', augment_pipe), ('D_GLS', D_GLS)]:
                 if module is not None:
                     if num_gpus > 1:
                         misc.check_ddp_consistency(module, ignore_regex=r'.*\.w_avg')

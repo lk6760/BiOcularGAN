@@ -51,9 +51,9 @@ def calc_metric(metric, **kwargs): # See metric_utils.MetricOptions for the full
     print("Got metric results")
     # Broadcast results.
 
-    #print(results_NIR)
+    #print(results_GLS)
 
-    #for res in [results, results_NIR]:
+    #for res in [results, results_GLS]:
     for key, value in list(results.items()):
         if opts.num_gpus > 1:
             value = torch.as_tensor(value, dtype=torch.float64, device=opts.device)
@@ -64,7 +64,7 @@ def calc_metric(metric, **kwargs): # See metric_utils.MetricOptions for the full
     # Decorate with metadata.
     return dnnlib.EasyDict(
         results         = dnnlib.EasyDict(results),
-        #results_NIR     = dnnlib.EasyDict(results_NIR),
+        #results_GLS     = dnnlib.EasyDict(results_GLS),
         metric          = metric,
         total_time      = total_time,
         total_time_str  = dnnlib.util.format_time(total_time),
@@ -91,8 +91,8 @@ def report_metric(result_dict, run_dir=None, snapshot_pkl=None):
 @register_metric
 def fid50k_full(opts):
     opts.dataset_kwargs.update(max_size=None, xflip=False)
-    fid, fid_NIR = frechet_inception_distance.compute_fid(opts, max_real=None, num_gen=50000)
-    return dict(fid50k_full=fid, fid50k_full_NIR=fid_NIR)
+    fid, fid_GLS = frechet_inception_distance.compute_fid(opts, max_real=None, num_gen=50000)
+    return dict(fid50k_full=fid, fid50k_full_GLS=fid_GLS)
 
 @register_metric
 def kid50k_full(opts):

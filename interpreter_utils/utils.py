@@ -92,9 +92,9 @@ def latent_to_image(g_all, upsamplers, latents, return_upsampled_layers=False, u
 
     #print("Style Latents:", style_latents.shape)
     if print_log: print("Use synthesis")
-    img_list, NIR_list, affine_layers = g_all.module.g_synthesis(style_latents)
+    img_list, GLS_list, affine_layers = g_all.module.g_synthesis(style_latents)
     #print("IMG shape:", img_list.shape)
-    #print("NIR shape:", NIR_list.shape)
+    #print("GLS shape:", GLS_list.shape)
     #print(affine_layers)
     #print("///  Len of affine layers:", len(affine_layers)) # concatenated feature maps
     #np.save("from_synthesis.npy", img_list.cpu().detach().numpy())
@@ -104,15 +104,15 @@ def latent_to_image(g_all, upsamplers, latents, return_upsampled_layers=False, u
         if process_out:
             if img_list.shape[-2] > 512:
                 img_list = upsamplers[-1](img_list)
-                NIR_list = upsamplers[-1](NIR_list)
+                GLS_list = upsamplers[-1](GLS_list)
             img_list = img_list.cpu().detach().numpy()
             img_list = process_image(img_list)
             img_list = np.transpose(img_list, (0, 2, 3, 1)).astype(np.uint8)
 
-            NIR_list = NIR_list.cpu().detach().numpy()
-            NIR_list = process_image(NIR_list)
-            NIR_list = np.transpose(NIR_list, (0, 2, 3, 1)).astype(np.uint8)
-        return img_list, NIR_list, style_latents
+            GLS_list = GLS_list.cpu().detach().numpy()
+            GLS_list = process_image(GLS_list)
+            GLS_list = np.transpose(GLS_list, (0, 2, 3, 1)).astype(np.uint8)
+        return img_list, GLS_list, style_latents
     ##### 
 
 
@@ -157,7 +157,7 @@ def latent_to_image(g_all, upsamplers, latents, return_upsampled_layers=False, u
 
     if img_list.shape[-2] != 512:
         img_list = upsamplers[-1](img_list)
-        NIR_list = upsamplers[-1](NIR_list)
+        GLS_list = upsamplers[-1](GLS_list)
 
     
     if process_out:
@@ -166,14 +166,14 @@ def latent_to_image(g_all, upsamplers, latents, return_upsampled_layers=False, u
         img_list = np.transpose(img_list, (0, 2, 3, 1)).astype(np.uint8)
         # print('start_channel_index',start_channel_index)
 
-        NIR_list = NIR_list.cpu().detach().numpy()
-        NIR_list = process_image(NIR_list)
-        NIR_list = np.transpose(NIR_list, (0, 2, 3, 1)).astype(np.uint8)
+        GLS_list = GLS_list.cpu().detach().numpy()
+        GLS_list = process_image(GLS_list)
+        GLS_list = np.transpose(GLS_list, (0, 2, 3, 1)).astype(np.uint8)
 
 
     #np.save("images.npy", img_list)
     #exit()
-    return img_list, NIR_list, affine_layers_upsamples
+    return img_list, GLS_list, affine_layers_upsamples
 
 
 def process_image(images):

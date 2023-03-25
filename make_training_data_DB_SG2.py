@@ -33,7 +33,7 @@ import json
 from collections import OrderedDict
 import numpy as np
 import os
-device_ids = [1]
+
 from PIL import Image
 
 from models.stylegan1 import G_mapping,Truncation,G_synthesis
@@ -41,7 +41,10 @@ import copy
 from numpy.random import choice
 from interpreter_utils.utils import latent_to_image, Interpolate
 import argparse
-device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
+
+device_ids = [0]
+device = 'cuda:' + str(device_ids[0]) if torch.cuda.is_available() else 'cpu'
+print("Device:", device)
 
 from torch_utils import misc
 import dnnlib
@@ -111,6 +114,10 @@ def prepare_stylegan(args):
         if args['category'] == "eyes_512":
             resolution = 512 # TODO 256
             max_layer = 7
+        
+        if args['category'] == "face_1024":
+            resolution = 1024 # TODO 256
+            max_layer = 7
 
         else:
             assert "Not implementated!"
@@ -179,7 +186,6 @@ def generate_data(args, num_sample, sv_path):
     # use face_palette because it has most classes
     # from torch_utils.data_util import face_palette as palette
 
-
     
     if os.path.exists(sv_path):
         pass
@@ -187,11 +193,12 @@ def generate_data(args, num_sample, sv_path):
         os.system('mkdir -p %s' % (sv_path))
         print('Experiment folder created at: %s' % (sv_path))
 
-    print("Preparing Stylegan", end="")
+    print("Preparing Stylegan...")
 
+    print("args:")
     print(args)
     g_all, avg_latent, upsamplers = prepare_stylegan(args)
-    print(" ..... Done")
+    print("..... Done")
     # dump avg_latent for reproducibility
     mean_latent_sv_path = os.path.join(sv_path, "avg_latent_stylegan.npy")
     np.save(mean_latent_sv_path, avg_latent[0].detach().cpu().numpy())
@@ -219,26 +226,27 @@ def generate_data(args, num_sample, sv_path):
 
             latent = torch.from_numpy(latent).type(torch.FloatTensor).to(device)
 
-            img, img_NIR, _ = latent_to_image(g_all, upsamplers, latent, dim=args['dim'][1],
+            img, img_GLS, _ = latent_to_image(g_all, upsamplers, latent, dim=args['dim'][1],
                                                         return_upsampled_layers=False, dev=device)
             
             if args['dim'][0] != args['dim'][1]:
                 img = img[:, 64:448][0]
-                img_NIR = img_NIR[:, 64:448][0]
+                img_GLS = img_GLS[:, 64:448][0]
             else:
                 img = img[0]
-                img_NIR = img_NIR[0]
+                img_GLS = img_GLS[0]
             
             
             img = Image.fromarray(img)
             image_name =  os.path.join(image_folder,"image_%d.jpg" % i)
             img.save(image_name)
 
-
-            img_NIR = img_NIR[:, :, 0]
-            img_NIR = Image.fromarray(img_NIR, mode="L")
-            image_NIR_name =  os.path.join(image_folder, "image_%d_NIR.jpg" % i)
-            img_NIR.save(image_NIR_name)
+            # Turn into grayscale
+            # img_GLS = img_GLS[:, :, 0]
+            #img_GLS = Image.fromarray(img_GLS, mode="L")
+            img_GLS = Image.fromarray(img_GLS)
+            image_GLS_name =  os.path.join(image_folder, "image_%d_GLS.jpg" % i)
+            img_GLS.save(image_GLS_name)
             
 
         latent_cache = np.concatenate(latent_cache, 0)
@@ -275,7 +283,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('--exp', type=str)
-    parser.add_argument('--num_sample', type=int,  default= 100)
+    parser.add_argument('--num_sample', type=int,  default=100)
     parser.add_argument('--sv_path', type=str)
     parser.add_argument('--expand_to_dimensions', type=int)
     
@@ -285,7 +293,7 @@ if __name__ == '__main__':
     print("Opt", opts)
 
 
-    path =opts['exp_dir']
+    path = opts['exp_dir']
     if os.path.exists(path):
         pass
     else:

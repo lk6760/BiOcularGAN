@@ -23,24 +23,24 @@ def compute_fid(opts, max_real, num_gen):
     detector_url = 'https://nvlabs-fi-cdn.nvidia.com/stylegan2-ada-pytorch/pretrained/metrics/inception-2015-12-05.pt'
     detector_kwargs = dict(return_features=True) # Return raw features before the softmax layer.
 
-    #print("Eval:",  opts)
-    #print(max_real)
-    #print(num_gen)
+    # print("Eval:",  opts)
+    # print(max_real)
+    # print(num_gen)
 
-    dataset_stats, dataset_stats_NIR = metric_utils.compute_feature_stats_for_dataset(
+    dataset_stats, dataset_stats_GLS = metric_utils.compute_feature_stats_for_dataset(
                     opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
                     rel_lo=0, rel_hi=0, capture_mean_cov=True, max_items=max_real)
 
     mu_real, sigma_real = dataset_stats.get_mean_cov()
-    mu_real_NIR, sigma_real_NIR = dataset_stats_NIR.get_mean_cov()
+    mu_real_GLS, sigma_real_GLS = dataset_stats_GLS.get_mean_cov()
     
 
-    stats, stats_NIR = metric_utils.compute_feature_stats_for_generator(
+    stats, stats_GLS = metric_utils.compute_feature_stats_for_generator(
         opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
         rel_lo=0, rel_hi=1, capture_mean_cov=True, max_items=num_gen)
 
     mu_gen, sigma_gen = stats.get_mean_cov()
-    mu_gen_NIR, sigma_gen_NIR = stats_NIR.get_mean_cov()
+    mu_gen_GLS, sigma_gen_GLS = stats_GLS.get_mean_cov()
 
     # mu_real, sigma_real = metric_utils.compute_feature_stats_for_dataset(
     #     opts=opts, detector_url=detector_url, detector_kwargs=detector_kwargs,
@@ -60,12 +60,12 @@ def compute_fid(opts, max_real, num_gen):
     s, _ = scipy.linalg.sqrtm(np.dot(sigma_gen, sigma_real), disp=False) # pylint: disable=no-member
     fid = np.real(m + np.trace(sigma_gen + sigma_real - s * 2))
 
-    # for NIR 
-    m_NIR = np.square(mu_gen_NIR - mu_real_NIR).sum()
-    s_NIR, _ = scipy.linalg.sqrtm(np.dot(sigma_gen_NIR, sigma_real_NIR), disp=False) # pylint: disable=no-member
-    fid_NIR = np.real(m_NIR + np.trace(sigma_gen_NIR + sigma_real_NIR - s_NIR * 2))
+    # for GLS 
+    m_GLS = np.square(mu_gen_GLS - mu_real_GLS).sum()
+    s_GLS, _ = scipy.linalg.sqrtm(np.dot(sigma_gen_GLS, sigma_real_GLS), disp=False) # pylint: disable=no-member
+    fid_GLS = np.real(m_GLS + np.trace(sigma_gen_GLS + sigma_real_GLS - s_GLS * 2))
     
 
-    return float(fid), float(fid_NIR)
+    return float(fid), float(fid_GLS)
 
 #----------------------------------------------------------------------------

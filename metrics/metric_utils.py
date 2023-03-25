@@ -15,6 +15,7 @@ import uuid
 import numpy as np
 import torch
 import dnnlib
+from tqdm import tqdm
 
 #----------------------------------------------------------------------------
 
@@ -182,6 +183,7 @@ class ProgressMonitor:
 def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_lo=0, rel_hi=1, batch_size=64, data_loader_kwargs=None, max_items=None, **stats_kwargs):
     print("Compute features of the dataset")
     dataset = dnnlib.util.construct_class_by_name(**opts.dataset_kwargs)
+ 
     if data_loader_kwargs is None:
         data_loader_kwargs = dict(pin_memory=True, num_workers=3, prefetch_factor=2)
 
@@ -215,7 +217,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     if max_items is not None:
         num_items = min(num_items, max_items)
     stats = FeatureStats(max_items=num_items, **stats_kwargs)
-    stats_NIR = FeatureStats(max_items=num_items, **stats_kwargs)
+    stats_GLS = FeatureStats(max_items=num_items, **stats_kwargs)
     
     progress = opts.progress.sub(tag='dataset features', num_items=num_items, rel_lo=rel_lo, rel_hi=rel_hi)
     detector = get_feature_detector(url=detector_url, device=opts.device, num_gpus=opts.num_gpus, rank=opts.rank, verbose=progress.verbose)
@@ -224,25 +226,27 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
     item_subset = [(i * opts.num_gpus + opts.rank) % num_items for i in range((num_items - 1) // opts.num_gpus + 1)]
 
     #print(item_subset)
-    for images, images_NIR, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
+    #batch_size = 1
+
+    for images, images_GLS, _labels in torch.utils.data.DataLoader(dataset=dataset, sampler=item_subset, batch_size=batch_size, **data_loader_kwargs):
         #print(masks.shape)
         # TODO Here? Metrics? 
         #print("...")
         #print(images.shape)
-        #print(images_NIR.shape)
-        images_NIR.repeat(1, 3, 1, 1)
+        #print(images_GLS.shape)
+        images_GLS.repeat(1, 3, 1, 1)
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         
-        if images_NIR.shape[1] == 1:
-            images_NIR = images_NIR.repeat([1,3,1,1]) # TODO WHAT? 
+        if images_GLS.shape[1] == 1:
+            images_GLS = images_GLS.repeat([1,3,1,1]) # TODO WHAT? 
 
 
         features = detector(images.to(opts.device), **detector_kwargs)
-        features_NIR = detector(images_NIR.to(opts.device), **detector_kwargs)
+        features_GLS = detector(images_GLS.to(opts.device), **detector_kwargs)
 
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
-        stats_NIR.append_torch(features_NIR, num_gpus=opts.num_gpus, rank=opts.rank)
+        stats_GLS.append_torch(features_GLS, num_gpus=opts.num_gpus, rank=opts.rank)
 
         progress.update(stats.num_items)
 
@@ -257,7 +261,7 @@ def compute_feature_stats_for_dataset(opts, detector_url, detector_kwargs, rel_l
         os.replace(temp_file, cache_file) # atomic
 
     #print(stats)
-    return stats, stats_NIR
+    return stats, stats_GLS
 
 #----------------------------------------------------------------------------
 
@@ -272,11 +276,11 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Image generation func.
     def run_generator(z, c):
-        img, img_NIR = G(z=z, c=c, **opts.G_kwargs)
+        img, img_GLS = G(z=z, c=c, **opts.G_kwargs)
         img = (img * 127.5 + 128).clamp(0, 255).to(torch.uint8)
-        img_NIR = (img_NIR * 127.5 + 128).clamp(0, 255).to(torch.uint8)
+        img_GLS = (img_GLS * 127.5 + 128).clamp(0, 255).to(torch.uint8)
         
-        return img, img_NIR
+        return img, img_GLS
 
     # JIT.
     if jit:
@@ -286,7 +290,7 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     # Initialize.
     stats = FeatureStats(**stats_kwargs)
-    stats_NIR = FeatureStats(**stats_kwargs)
+    stats_GLS = FeatureStats(**stats_kwargs)
     
     assert stats.max_items is not None
     progress = opts.progress.sub(tag='generator features', num_items=stats.max_items, rel_lo=rel_lo, rel_hi=rel_hi)
@@ -294,50 +298,54 @@ def compute_feature_stats_for_generator(opts, detector_url, detector_kwargs, rel
 
     #     -- Compute metric: fid50k_full  of  1
     # torch.Size([4, 3, 256, 256])
+    #print(stats_kwargs)
+    #print(not stats.is_full())
 
     # Main loop.
 
     print("Compute features of generator")
+    #pbar = tqdm(total = stats.max_items+1)
     while not stats.is_full():
         images = []
-        images_NIR = []
-
+        images_GLS = []
         
         for _i in range(batch_size // batch_gen):
             z = torch.randn([batch_gen, G.z_dim], device=opts.device)
             c = [dataset.get_label(np.random.randint(len(dataset))) for _i in range(batch_gen)]
             c = torch.from_numpy(np.stack(c)).pin_memory().to(opts.device)
 
-            img, img_NIR = run_generator(z, c)
+            img, img_GLS = run_generator(z, c)
 
             #print(img.shape)
             images.append(img)
-            images_NIR.append(img_NIR)
-            # TODO what about masks oR NIR? 
+            images_GLS.append(img_GLS)
+            # TODO what about masks oR GLS? 
             # check if combined into images? or not ? 
-            # split into seperate metrics for NIR and RGB then retrain (or simply continue)
+            # split into seperate metrics for GLS and RGB then retrain (or simply continue)
             #exit()
         
         images = torch.cat(images)
-        images_NIR = torch.cat(images_NIR)
+        images_GLS = torch.cat(images_GLS)
         if images.shape[1] == 1:
             images = images.repeat([1, 3, 1, 1])
         
-        if images_NIR.shape[1] == 1:
-            images_NIR = images_NIR.repeat([1, 3, 1, 1])
+        if images_GLS.shape[1] == 1:
+            images_GLS = images_GLS.repeat([1, 3, 1, 1])
             
         features = detector(images, **detector_kwargs)
-        features_NIR = detector(images_NIR, **detector_kwargs)
+        features_GLS = detector(images_GLS, **detector_kwargs)
         
         
 
         stats.append_torch(features, num_gpus=opts.num_gpus, rank=opts.rank)
-        stats_NIR.append_torch(features_NIR, num_gpus=opts.num_gpus, rank=opts.rank)
+        stats_GLS.append_torch(features_GLS, num_gpus=opts.num_gpus, rank=opts.rank)
 
         progress.update(stats.num_items)
-        #break 
+        #pbar.update(1)
+        break
 
+    #pbar.close()
     #print("--- Done FID")
-    return stats, stats_NIR
+    return stats, stats_GLS
 
 #----------------------------------------------------------------------------

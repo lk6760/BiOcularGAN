@@ -83,8 +83,9 @@ class Dataset(torch.utils.data.Dataset):
         return self._raw_idx.size
 
     def __getitem__(self, idx):
+        #print(idx, self._raw_idx[idx])
         image = self._load_raw_image(self._raw_idx[idx])
-        NIR_img =  self._load_raw_NIR(self._raw_idx[idx])
+        GLS_img = self._load_raw_GLS(self._raw_idx[idx])
         
         assert isinstance(image, np.ndarray)
         assert list(image.shape) == self.image_shape
@@ -92,10 +93,10 @@ class Dataset(torch.utils.data.Dataset):
         if self._xflip[idx]:
             assert image.ndim == 3 # CHW
             image = image[:, :, ::-1]
-            NIR_img = NIR_img[:, :, ::-1]
+            GLS_img = GLS_img[:, :, ::-1]
 
         #print("image:", image.shape, "mask:", mask.shape)
-        return image.copy(), NIR_img.copy(), self.get_label(idx)
+        return image.copy(), GLS_img.copy(), self.get_label(idx)
 
     def get_label(self, idx):
         label = self._get_raw_labels()[self._raw_idx[idx]]
@@ -168,16 +169,17 @@ class ImageFolderDataset(Dataset):
         #self.image_path = self._path + "/images"
         #print(self._path)
         self.mask_path = "/".join(self._path.split("/")[:-1]) + "/masks"
-
-        self.path_NIR = "/".join(self._path.split("/")[:-1]) + "/NIR"
+        self.path_GLS = "/".join(self._path.split("/")[:-1]) + "/GLS"
         #print(self.mask_path)
+        #print(self.path_GLS)
+
 
         if os.path.isdir(self._path):
             self._type = 'dir'
             
             self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in os.walk(self._path) for fname in files}
             self._all_mask_fnames = {os.path.relpath(os.path.join(root, fname), start=self.mask_path) for root, _dirs, files in os.walk(self.mask_path) for fname in files}
-            self._all_NIR_fnames = {os.path.relpath(os.path.join(root, fname), start=self.path_NIR) for root, _dirs, files in os.walk(self.path_NIR) for fname in files}
+            self._all_GLS_fnames = {os.path.relpath(os.path.join(root, fname), start=self.path_GLS) for root, _dirs, files in os.walk(self.path_GLS) for fname in files}
         elif self._file_ext(self._path) == '.zip':
             self._type = 'zip'
             self._all_fnames = set(self._get_zipfile().namelist())
@@ -187,14 +189,14 @@ class ImageFolderDataset(Dataset):
         PIL.Image.init()
         self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         #self._mask_fnames = sorted(fname for fname in self._all_mask_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
-        self._NIR_fnames = sorted(fname for fname in self._all_NIR_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+        self._GLS_fnames = sorted(fname for fname in self._all_GLS_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
         
         if len(self._image_fnames) == 0:
             raise IOError('No image files found in the specified path')
         #if len(self._mask_fnames) == 0:
         #    raise IOError('No Masks files found in the specified path')
-        if len(self._NIR_fnames) == 0:
-            raise IOError('No NIR files found in the specified path')
+        if len(self._GLS_fnames) == 0:
+            raise IOError('No GLS files found in the specified path')
         
 
         name = os.path.splitext(os.path.basename(self._path))[0]
@@ -243,9 +245,10 @@ class ImageFolderDataset(Dataset):
         image = image.transpose(2, 0, 1) # HWC => CHW
         return image
 
-    def _load_raw_NIR(self, raw_idx):
-        fname = self._NIR_fnames[raw_idx]
-        with self._open_file(self.path_NIR, fname) as f:
+    def _load_raw_GLS(self, raw_idx):
+        #print(len(self._GLS_fnames))
+        fname = self._GLS_fnames[raw_idx]
+        with self._open_file(self.path_GLS, fname) as f:
             if pyspng is not None and self._file_ext(fname) == '.png':
                 image = pyspng.load(f.read())
             else:

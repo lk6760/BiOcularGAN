@@ -8,7 +8,8 @@ from torch_utils import misc
 
 def prepare_SG2(resolution, path_to_pretrained, avg_latent, max_layer, gpus, device, save_intermediate_results=False):
     
-    spec = dnnlib.EasyDict(dict(ref_gpus= gpus, kimg=25000,  mb=-1, mbstd=-1, fmaps=-1,  lrate=-1,     gamma=-1,   ema=-1,  ramp=0.05, map=8))
+    spec = dnnlib.EasyDict(dict(ref_gpus=gpus, kimg=250,  mb=-1, mbstd=-1, fmaps=-1,  lrate=-1,     gamma=-1,   ema=-1,  ramp=0.05, map=8))
+    print("spec...")
     print(spec)
     res = resolution
     spec.mb = max(min(gpus * min(4096 // res, 32), 64), gpus) # keep gpu memory consumption at bay
@@ -27,7 +28,8 @@ def prepare_SG2(resolution, path_to_pretrained, avg_latent, max_layer, gpus, dev
     G_kwargs.mapping_kwargs.num_layers = spec.map
     G_kwargs.synthesis_kwargs.num_fp16_res = D_kwargs.num_fp16_res = 4 # enable mixed-precision training
     G_kwargs.synthesis_kwargs.conv_clamp = D_kwargs.conv_clamp = 256 # clamp activations to avoid float16 overflow
-    
+    G_kwargs.synthesis_kwargs.channels_dict = D_kwargs.channels_dict = {4: 512, 8: 512, 16: 512, 32: 512, 64: 256, 128: 128, 256: 64, 512: 64, 1024: 32} #256
+
     
     D_kwargs.epilogue_kwargs.mbstd_group_size = spec.mbstd
 
@@ -39,9 +41,11 @@ def prepare_SG2(resolution, path_to_pretrained, avg_latent, max_layer, gpus, dev
     training_set_resolution = resolution
     training_set_num_channels = 3 
     common_kwargs = dict(c_dim=training_set_label_dim, img_resolution=training_set_resolution, img_channels=training_set_num_channels)
-
+    print("G_kwargs...")
     print(G_kwargs)
+    print("common_kwargs...")
     print(common_kwargs)
+
     G = dnnlib.util.construct_class_by_name(**G_kwargs, **common_kwargs).requires_grad_(False).to(device)
 
     print(G)
@@ -55,7 +59,7 @@ def prepare_SG2(resolution, path_to_pretrained, avg_latent, max_layer, gpus, dev
 
     g_all = torch.nn.Sequential(OrderedDict([
         ('g_mapping', G.mapping),
-        #('truncation', Truncation(avg_latent, max_layer=max_layer, device=device, threshold=0.7)),
+        ('truncation', Truncation(avg_latent, max_layer=max_layer, device=device, threshold=0.7)),
         ('g_synthesis', G.synthesis)
     ]))
     
